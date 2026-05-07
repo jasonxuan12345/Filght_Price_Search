@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flight Value Advisor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="toolbar">
+        <div>
+          <h1>厦门 ⇄ 伦敦机票优化器</h1>
+          <p>Google Flights 数据接入 + 南航官网复核链接 + 票价策略评分</p>
+        </div>
+        <button id="run">重新扫描</button>
+      </section>
+
+      <section class="controls">
+        <label>出发地 <input id="origin" value="XMN" /></label>
+        <label>目的地 <input id="destination" value="LON" /></label>
+        <label>出发开始 <input id="outboundStart" type="date" value="2026-05-20" /></label>
+        <label>出发结束 <input id="outboundEnd" type="date" value="2026-06-08" /></label>
+        <label>旅行天数 <input id="nights" type="number" min="3" max="30" value="7" /></label>
+        <label>伦敦机场 <input id="airports" value="LHR,LGW" /></label>
+        <label>自动遍历 <select id="crawl"><option value="false">关闭</option><option value="true">开启</option></select></label>
+        <label>遍历天数 <input id="crawlDays" type="number" min="1" max="21" value="4" /></label>
+      </section>
+
+      <section class="status" id="status">准备就绪</section>
+      <section id="top" class="grid"></section>
+
+      <section class="panel">
+        <h2>来源遍历状态</h2>
+        <div id="crawlResults" class="crawl-results"></div>
+      </section>
+
+      <section class="panel">
+        <h2>日期查询入口</h2>
+        <div id="queries" class="queries"></div>
+      </section>
+
+      <section class="panel">
+        <h2>使用说明</h2>
+        <p>设置环境变量 <code>SERPAPI_KEY</code> 后会尝试拉取 Google Flights 结构化结果。没有 key 时，工具仍会生成 Google Flights 与南航官网复核链接，并使用内置策略样例进行排序。</p>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

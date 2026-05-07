@@ -1,0 +1,11 @@
+{
+  "name": "flight-value-advisor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "scan": "node server.js --scan",
+    "sample": "node server.js --sample"
+  }
+}
