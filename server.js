@@ -18,7 +18,8 @@ const DEFAULT_REQUEST = {
   allowDomesticTransfer: true,
   allowLondonAirports: ["LHR", "LGW"],
   cabin: "economy",
-  currency: "USD"
+  currency: "USD",
+  sortBy: "price"
 };
 
 const LONDON_AIRPORTS = ["LHR", "LGW"];
@@ -420,6 +421,32 @@ function makeDateQueries(request) {
   });
 }
 
+function sortOptions(options, sortBy, preferredAirline, preferredAirlineCode) {
+  if (sortBy === "airline") {
+    return [...options].sort((a, b) => {
+      const airlineTextA = a.airlines.join(" ").toLowerCase();
+      const airlineTextB = b.airlines.join(" ").toLowerCase();
+      const hasPreferredA = airlineTextA.includes(preferredAirline.toLowerCase()) || airlineTextA.includes(preferredAirlineCode.toLowerCase());
+      const hasPreferredB = airlineTextB.includes(preferredAirline.toLowerCase()) || airlineTextB.includes(preferredAirlineCode.toLowerCase());
+      const allPreferredA = a.airlines.every((airline) => {
+        const normalized = normalizeAirlineName(airline);
+        return normalized === preferredAirline || airline === preferredAirlineCode;
+      });
+      const allPreferredB = b.airlines.every((airline) => {
+        const normalized = normalizeAirlineName(airline);
+        return normalized === preferredAirline || airline === preferredAirlineCode;
+      });
+      if (allPreferredA && !allPreferredB) return -1;
+      if (!allPreferredA && allPreferredB) return 1;
+      if (hasPreferredA && !hasPreferredB) return -1;
+      if (!hasPreferredA && hasPreferredB) return 1;
+      return a.priceUsd - b.priceUsd;
+    });
+  } else {
+    return [...options].sort((a, b) => a.priceUsd - b.priceUsd);
+  }
+}
+
 async function analyze(request = DEFAULT_REQUEST) {
   const mergedRequest = { ...DEFAULT_REQUEST, ...request };
   const exchangeRate = await getUsdCnyRate();
@@ -433,22 +460,21 @@ async function analyze(request = DEFAULT_REQUEST) {
   if (mergedRequest.crawl === true || mergedRequest.crawl === "true") {
     crawlFindings = await crawlSources(mergedRequest, Number(mergedRequest.crawlDays || 4));
   }
-  const options = [...live.options, ...sampleOptions(mergedRequest)]
+  const allOptions = [...live.options, ...sampleOptions(mergedRequest)]
     .map((option) => ({
       ...option,
       priceCny: usdToCny(option.priceUsd, exchangeRate.rate),
       crawlFindings: crawlFindings.filter((finding) => finding.url.includes(option.outboundDate))
     }))
-    .map((option) => ({ ...option, risks: estimateRisks(option) }))
-    .sort((a, b) => b.score - a.score || a.priceUsd - b.priceUsd)
-    .slice(0, 12);
+    .map((option) => ({ ...option, risks: estimateRisks(option) }));
+  const options = sortOptions(allOptions, mergedRequest.sortBy, mergedRequest.preferredAirline, mergedRequest.preferredAirlineCode).slice(0, 20);
   return {
     generatedAt: new Date().toISOString(),
     request: mergedRequest,
     exchangeRate,
     providerStatus: live.message,
     crawlFindings,
-    top: options.slice(0, 3),
+    top: options.slice(0, 5),
     options,
     dateQueries: makeDateQueries(mergedRequest),
     notes: [
@@ -493,7 +519,8 @@ async function startServer() {
         allowLondonAirports: request.allowLondonAirports ? request.allowLondonAirports.split(",") : DEFAULT_REQUEST.allowLondonAirports,
         preferEveningDeparture: request.preferEveningDeparture !== "false",
         crawl: request.crawl === "true",
-        crawlDays: request.crawlDays ? Number(request.crawlDays) : 4
+        crawlDays: request.crawlDays ? Number(request.crawlDays) : 4,
+        sortBy: request.sortBy || DEFAULT_REQUEST.sortBy
       };
       sendJson(res, await analyze(parsed));
       return;
