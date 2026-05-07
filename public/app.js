@@ -1,26 +1,83 @@
 const fields = {
+  serpApiKey: document.querySelector("#serpApiKey"),
   origin: document.querySelector("#origin"),
   destination: document.querySelector("#destination"),
   airlineId: document.querySelector("#airlineId"),
   outboundStart: document.querySelector("#outboundStart"),
   outboundEnd: document.querySelector("#outboundEnd"),
-  nights: document.querySelector("#nights")
+  nights: document.querySelector("#nights"),
+  serpApiMaxQueries: document.querySelector("#serpApiMaxQueries"),
+  serpApiConcurrency: document.querySelector("#serpApiConcurrency")
 };
 
 const statusEl = document.querySelector("#status");
 const resultsEl = document.querySelector("#results");
 const resultCountEl = document.querySelector("#resultCount");
+const queryEstimateEl = document.querySelector("#queryEstimate");
 document.querySelector("#run").addEventListener("click", run);
 
+const savedSerpApiKey = sessionStorage.getItem("serpApiKey") || "";
+fields.serpApiKey.value = savedSerpApiKey;
+
+fields.serpApiKey.addEventListener("input", () => {
+  const key = fields.serpApiKey.value.trim();
+  if (key) {
+    sessionStorage.setItem("serpApiKey", key);
+    statusEl.textContent = "SerpApi Key 已输入，点击「查询航班」开始搜索。";
+  } else {
+    sessionStorage.removeItem("serpApiKey");
+    statusEl.textContent = "请先输入 SerpApi Key，再点击「查询航班」。";
+  }
+  resultsEl.innerHTML = "";
+  resultCountEl.textContent = "";
+});
+
+function dateCount(start, end) {
+  const startDate = new Date(`${start}T00:00:00Z`);
+  const endDate = new Date(`${end}T00:00:00Z`);
+  const days = Math.floor((endDate - startDate) / 86400000) + 1;
+  return Number.isFinite(days) && days > 0 ? days : 0;
+}
+
+function estimatedSerpApiQueries() {
+  const days = dateCount(fields.outboundStart.value, fields.outboundEnd.value);
+  const destination = fields.destination.value.trim().toUpperCase();
+  const airportCount = destination === "LON" ? 2 : 1;
+  return { days, airportCount, total: Math.max(1, days * airportCount) };
+}
+
+function updateQueryEstimate({ syncLimit = false } = {}) {
+  const estimate = estimatedSerpApiQueries();
+  if (syncLimit) {
+    fields.serpApiMaxQueries.value = String(estimate.total);
+  }
+  const concurrency = Math.max(1, Number(fields.serpApiConcurrency.value || 1));
+  const batches = Math.ceil(Math.min(Number(fields.serpApiMaxQueries.value || estimate.total), estimate.total) / concurrency);
+  queryEstimateEl.textContent = `预计 SerpApi 查询 ${estimate.total} 次（${estimate.days || 0} 天 × ${estimate.airportCount} 个机场）。当前并发 ${concurrency}，约 ${batches} 批完成。上限低于预计值时，只会查询前面一部分日期/机场。`;
+}
+
+for (const field of [fields.destination, fields.outboundStart, fields.outboundEnd]) {
+  field.addEventListener("change", () => updateQueryEstimate({ syncLimit: true }));
+  field.addEventListener("input", () => updateQueryEstimate());
+}
+
+for (const field of [fields.serpApiMaxQueries, fields.serpApiConcurrency]) {
+  field.addEventListener("change", () => updateQueryEstimate());
+  field.addEventListener("input", () => updateQueryEstimate());
+}
+
 function params() {
-  const p = new URLSearchParams();
-  p.set("origin", fields.origin.value.trim());
-  p.set("destination", fields.destination.value.trim());
-  p.set("airlineId", fields.airlineId.value);
-  p.set("outboundStart", fields.outboundStart.value);
-  p.set("outboundEnd", fields.outboundEnd.value);
-  p.set("nights", fields.nights.value);
-  return p;
+  return {
+    serpApiKey: fields.serpApiKey.value.trim(),
+    origin: fields.origin.value.trim(),
+    destination: fields.destination.value.trim(),
+    airlineId: fields.airlineId.value,
+    outboundStart: fields.outboundStart.value,
+    outboundEnd: fields.outboundEnd.value,
+    nights: fields.nights.value,
+    serpApiMaxQueries: fields.serpApiMaxQueries.value,
+    serpApiConcurrency: fields.serpApiConcurrency.value
+  };
 }
 
 function formatLeg(leg) {
@@ -151,12 +208,25 @@ function renderFlightCards(options) {
 }
 
 async function run() {
+  if (!fields.serpApiKey.value.trim()) {
+    statusEl.textContent = "请先输入 SerpApi Key，再查询 Google Flights 实时价格。";
+    resultsEl.innerHTML = "";
+    resultCountEl.textContent = "";
+    fields.serpApiKey.focus();
+    return;
+  }
+
   statusEl.textContent = "正在查询航班价格...";
+  updateQueryEstimate();
   resultsEl.innerHTML = "";
   resultCountEl.textContent = "";
 
   try {
-    const response = await fetch(`/api/analyze?${params().toString()}`);
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(params())
+    });
     const result = await response.json();
 
     const count = result.options ? result.options.length : 0;
@@ -165,11 +235,15 @@ async function run() {
       ? result.airlines?.find(a => a.id === result.request.airlineId)?.name || "指定航司"
       : "全部航司";
 
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
     const priceInfo = pricedCount > 0
       ? `${pricedCount}条有价格`
       : "无实时价格数据";
 
-    statusEl.textContent = `${airlineLabel} · ${result.request.outboundStart} → ${result.request.outboundEnd} (${result.request.nights}天) · 共${count}条 · ${priceInfo} · 汇率 USD/CNY ${result.exchangeRate.rate} · ${new Date(result.generatedAt).toLocaleString()}`;
+    statusEl.textContent = `${airlineLabel} · ${result.request.outboundStart} → ${result.request.outboundEnd} (${result.request.nights}天) · 共${count}条 · ${priceInfo} · ${result.providerStatus} · 汇率 USD/CNY ${result.exchangeRate.rate} · ${new Date(result.generatedAt).toLocaleString()}`;
 
     renderFlightCards(result.options);
   } catch (error) {
@@ -178,6 +252,5 @@ async function run() {
   }
 }
 
-run().catch((error) => {
-  statusEl.textContent = `初始化失败：${error.message}`;
-});
+fields.serpApiKey.focus();
+updateQueryEstimate({ syncLimit: true });

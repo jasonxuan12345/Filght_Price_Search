@@ -17,6 +17,9 @@
       </section>
 
       <section class="controls">
+        <label class="api-key-field">SerpApi Key
+          <input id="serpApiKey" type="password" autocomplete="off" placeholder="输入 key 后再查询 Google Flights 价格" />
+        </label>
         <label>出发地 
           <input id="origin" value="XMN" />
         </label>
@@ -44,6 +47,13 @@
         <label>旅行天数 
           <input id="nights" type="number" min="3" max="30" value="7" />
         </label>
+        <label>SerpApi 查询次数上限
+          <input id="serpApiMaxQueries" type="number" min="1" max="500" value="40" />
+        </label>
+        <label>同时查询数
+          <input id="serpApiConcurrency" type="number" min="1" max="20" value="5" />
+        </label>
+        <div class="query-estimate" id="queryEstimate"></div>
       </section>
 
       <section class="status" id="status">准备就绪 — 点击「查询航班」获取实时价格</section>
@@ -56,7 +66,10 @@
       <section class="panel">
         <h2>使用说明</h2>
         <ul>
-          <li>选择航司后，系统自动遍历日期范围内的<strong>所有日期</strong></li>
+          <li>打开页面后先输入 SerpApi Key，再点击查询；key 只保存在当前浏览器会话中</li>
+          <li>选择航司后，系统自动遍历日期范围内的<strong>所有日期</strong>；目的地为 LON 时默认同时查 LHR 和 LGW</li>
+          <li>SerpApi 查询次数通常等于日期数 × 机场数；例如 6/1-6/30 查 LON 约需 60 次，单查 LHR 约需 30 次</li>
+          <li>“同时查询数”可以缩短等待时间，建议 3-8；太高可能触发限流或让单次请求更不稳定</li>
           <li>有 SERPAPI_KEY 时自动获取 Google Flights <strong>实时价格</strong>并排序</li>
           <li>无 API Key 时显示参考航班组合 + 查价链接</li>
           <li>免费注册 SerpApi 账号即可自动获取实时价格：<a href="https://serpapi.com/" target="_blank" rel="noreferrer">serpapi.com</a></li>
