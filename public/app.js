@@ -1,114 +1,183 @@
 const fields = {
   origin: document.querySelector("#origin"),
   destination: document.querySelector("#destination"),
+  airlineId: document.querySelector("#airlineId"),
   outboundStart: document.querySelector("#outboundStart"),
   outboundEnd: document.querySelector("#outboundEnd"),
-  nights: document.querySelector("#nights"),
-  airports: document.querySelector("#airports"),
-  crawl: document.querySelector("#crawl"),
-  crawlDays: document.querySelector("#crawlDays"),
-  sortBy: document.querySelector("#sortBy")
+  nights: document.querySelector("#nights")
 };
 
 const statusEl = document.querySelector("#status");
-const topEl = document.querySelector("#top");
-const queriesEl = document.querySelector("#queries");
-const crawlResultsEl = document.querySelector("#crawlResults");
+const resultsEl = document.querySelector("#results");
+const resultCountEl = document.querySelector("#resultCount");
 document.querySelector("#run").addEventListener("click", run);
 
 function params() {
   const p = new URLSearchParams();
   p.set("origin", fields.origin.value.trim());
   p.set("destination", fields.destination.value.trim());
+  p.set("airlineId", fields.airlineId.value);
   p.set("outboundStart", fields.outboundStart.value);
   p.set("outboundEnd", fields.outboundEnd.value);
   p.set("nights", fields.nights.value);
-  p.set("allowLondonAirports", fields.airports.value.trim());
-  p.set("crawl", fields.crawl.value);
-  p.set("crawlDays", fields.crawlDays.value);
-  p.set("sortBy", fields.sortBy.value);
   return p;
 }
 
-function money(value) {
-  return value ? `US$${Math.round(value)}` : "待查价";
+function formatLeg(leg) {
+  if (!leg || !leg.flightNo) return "";
+  return `${leg.flightNo} ${leg.from} ${leg.depLocal} → ${leg.to} ${leg.arrLocal}`;
 }
 
-function renderCard(option, index) {
-  const risks = option.risks.map((risk) => `<li>${risk}</li>`).join("");
-  const cny = option.priceCny ? `约 ¥${option.priceCny.toLocaleString("zh-CN")}` : "人民币待换算";
-  return `
-    <article class="card">
-      <span class="badge">Top ${index + 1} · score ${option.score}</span>
-      <h3>${option.title}</h3>
-      <div class="price">${cny}</div>
-      <div class="subprice">${money(option.priceUsd)} · 实时汇率换算</div>
-      <div class="meta">
-        <div><strong>日期：</strong>${option.outboundDate} → ${option.returnDate}</div>
-        <div><strong>路径：</strong>${option.routeZh || option.route}</div>
-        <div><strong>中转：</strong>${option.hubsZh?.join(", ") || option.hubs.join(", ") || "待确认"}</div>
-        <div><strong>伦敦机场：</strong>${option.londonAirportZh || option.londonAirport}</div>
-        <div><strong>航司：</strong>${option.airlines.join(" + ")}</div>
-        <div><strong>总时长：</strong>${option.totalDurationMinutes ? Math.floor(option.totalDurationMinutes / 60) + "h" + String(option.totalDurationMinutes % 60).padStart(2, "0") + "m" : "未知"}</div>
-        <div><strong>渠道：</strong>${option.channel}</div>
-      </div>
-      <ul>${risks}</ul>
-      <div class="links">
-        <a href="${option.sourceLinks.googleFlights}" target="_blank" rel="noreferrer">Google Flights</a>
-        <a href="${option.sourceLinks.trip}" target="_blank" rel="noreferrer">Trip.com</a>
-        <a href="${option.sourceLinks.ctrip}" target="_blank" rel="noreferrer">携程</a>
-        <a href="${option.sourceLinks.chinaSouthern}" target="_blank" rel="noreferrer">南航官网</a>
-      </div>
-    </article>
-  `;
-}
-
-function renderQueries(queries) {
-  queriesEl.innerHTML = queries.map((q) => `
-    <div class="query">
-      <strong>${q.outboundDate} (${q.weekday}) → ${q.returnDate}</strong>
-      <span>
-        <a href="${q.googleFlightsUrl}" target="_blank" rel="noreferrer">Google Flights</a> ·
-        <a href="${q.tripUrl}" target="_blank" rel="noreferrer">Trip.com</a> ·
-        <a href="${q.ctripUrl}" target="_blank" rel="noreferrer">携程</a> ·
-        <a href="${q.chinaSouthernUrl}" target="_blank" rel="noreferrer">南航官网</a>
-      </span>
-      <span>多城市：<code>${q.multiCityHint}</code></span>
-    </div>
-  `).join("");
-}
-
-function renderCrawlResults(findings) {
-  if (!findings?.length) {
-    crawlResultsEl.innerHTML = "未开启自动遍历。开启后会逐个访问 Google Flights、Trip.com、携程、南航官网，能抓到价格就展示，动态/验证码页面会标记为需复核。";
+function renderFlightCards(options) {
+  if (!options || options.length === 0) {
+    resultsEl.innerHTML = '<div class="empty-state">未查询到航班，请调整搜索条件后重试</div>';
+    resultCountEl.textContent = "";
     return;
   }
-  crawlResultsEl.innerHTML = findings.map((finding) => {
-    const prices = finding.extractedPrices?.length
-      ? finding.extractedPrices.map((p) => p.raw).join(", ")
-      : finding.note;
+
+  const pricedCount = options.filter(o => o.priceUsd != null || o.priceCny != null).length;
+  resultCountEl.textContent = `(共${options.length}条，${pricedCount}条有价格)`;
+
+  const rows = options.map((option, index) => {
+    const nights = option.returnDate && option.outboundDate
+      ? Math.round((new Date(option.returnDate) - new Date(option.outboundDate)) / (1000 * 60 * 60 * 24))
+      : "?";
+
+    const sourceIsSerpApi = option.source === "serpapi";
+
+    let outboundDetail = "";
+    let returnDetail = "";
+
+    if (option.outboundLegs && option.outboundLegs.length > 0) {
+      const legs = option.outboundLegs.map((leg, i) => {
+        if (i > 0) {
+          const layoverText = option.layoverOutbound || "中转";
+          return `<div class="leg layover">${layoverText}</div><div class="leg">${formatLeg(leg)}</div>`;
+        }
+        return `<div class="leg">${formatLeg(leg)}</div>`;
+      }).join("");
+      outboundDetail = legs;
+    } else if (option.outboundLeg1 && option.outboundLeg2) {
+      outboundDetail = `<div class="leg">${formatLeg(option.outboundLeg1)}</div><div class="leg layover">中转 ${option.layoverOutbound || "?"}</div><div class="leg">${formatLeg(option.outboundLeg2)}</div>`;
+    } else {
+      outboundDetail = `<div class="leg">${option.routeZh || option.route}</div>`;
+    }
+
+    if (option.returnLegs && option.returnLegs.length > 0) {
+      const legs = option.returnLegs.map((leg, i) => {
+        if (i > 0) {
+          const layoverText = option.layoverReturn || "中转";
+          return `<div class="leg layover">${layoverText}</div><div class="leg">${formatLeg(leg)}</div>`;
+        }
+        return `<div class="leg">${formatLeg(leg)}</div>`;
+      }).join("");
+      returnDetail = legs;
+    } else if (option.returnLeg1 && option.returnLeg2) {
+      returnDetail = `<div class="leg">${formatLeg(option.returnLeg1)}</div><div class="leg layover">中转 ${option.layoverReturn || "?"}</div><div class="leg">${formatLeg(option.returnLeg2)}</div>`;
+    }
+
+    const hasPrice = option.priceUsd != null || option.priceCny != null;
+    const isCtripPrice = option.source === "ctrip-lowest";
+    const priceCnyDisplay = option.priceCny
+      ? `<span class="price-cny">${isCtripPrice ? "" : "≈ "}¥${option.priceCny.toLocaleString("zh-CN")}</span>`
+      : "";
+    const priceUsdDisplay = option.priceUsd
+      ? `<span class="price-usd">US$${Math.round(option.priceUsd).toLocaleString()}</span>`
+      : "";
+    const priceUsdApproxDisplay = option.priceUsd
+      ? `<span class="price-cny">≈ US$${Math.round(option.priceUsd).toLocaleString()}</span>`
+      : "";
+
+    const priceNote = hasPrice
+      ? `<div class="price-main">${isCtripPrice ? `${priceCnyDisplay}${priceUsdApproxDisplay}` : `${priceUsdDisplay}${priceCnyDisplay}`}</div>`
+      : `<span class="price-unknown">待查价</span>`;
+
+    const cardClass = sourceIsSerpApi || isCtripPrice ? "flight-card serpapi-card" : "flight-card";
+    const rankBadge = index < 3 && hasPrice
+      ? `<span class="rank-badge">${index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}</span>`
+      : "";
+
+    const noteTag = option.note ? `<div class="flight-note">${option.note}</div>` : "";
+
     return `
-      <div class="crawl-row">
-        <strong>${finding.sourceName}</strong>
-        <span class="crawl-status ${finding.status}">${finding.status}</span>
-        <span><a href="${finding.url}" target="_blank" rel="noreferrer">${prices}</a></span>
+      <div class="${cardClass}">
+        <div class="card-header">
+          <div class="card-header-left">
+            ${rankBadge}
+            <span class="card-rank">#${index + 1}</span>
+            <span class="card-airline">${option.airlines.join(" + ")}</span>
+          </div>
+          <div class="card-header-center">
+            <span class="card-date">${option.outboundDate} → ${option.returnDate}</span>
+            <span class="card-nights">${nights}晚</span>
+          </div>
+          <div class="card-header-right">
+            ${option.totalDuration ? `<span class="card-duration">${option.totalDuration}</span>` : ""}
+            ${priceNote}
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="card-route">
+            <div class="route-section">
+              <div class="route-label">去程</div>
+              ${outboundDetail}
+            </div>
+            <div class="route-section">
+              <div class="route-label">回程</div>
+              ${returnDetail || '<div class="leg">数据收集中...</div>'}
+            </div>
+          </div>
+          ${noteTag}
+          ${option.priceSource ? `
+          <div class="card-price-source ${hasPrice ? 'has-price' : 'no-price'}">
+            <span class="price-source-text">${option.priceSource}</span>
+          </div>` : ""}
+          <div class="card-links">
+            <a href="${option.sourceLinks?.googleFlights || '#'}" target="_blank" rel="noreferrer" class="link-btn link-gf">Google Flights</a>
+            <a href="${option.sourceLinks?.trip || '#'}" target="_blank" rel="noreferrer" class="link-btn link-trip">Trip.com</a>
+            <a href="${option.sourceLinks?.ctrip || '#'}" target="_blank" rel="noreferrer" class="link-btn link-ctrip">携程</a>
+            ${option.airlineBaseUrl ? `<a href="${option.airlineBaseUrl}" target="_blank" rel="noreferrer" class="link-btn link-airline">航司官网</a>` : ""}
+          </div>
+          ${option.risks?.length ? `
+          <div class="card-risks">
+            ${option.risks.map(r => `<span class="risk-tag">${r}</span>`).join("")}
+          </div>` : ""}
+        </div>
       </div>
     `;
   }).join("");
+
+  resultsEl.innerHTML = rows;
 }
 
 async function run() {
-  statusEl.textContent = "扫描中...";
-  topEl.innerHTML = "";
-  const response = await fetch(`/api/analyze?${params().toString()}`);
-  const result = await response.json();
-  const sortLabel = result.request.sortBy === "airline" ? "航司优先" : "价格优先";
-  statusEl.textContent = `${result.providerStatus} · 排序方式：${sortLabel} · USD/CNY=${result.exchangeRate.rate}（${result.exchangeRate.source}） · 生成时间：${new Date(result.generatedAt).toLocaleString()}`;
-  topEl.innerHTML = result.options.map((option, index) => renderCard(option, index)).join("");
-  renderQueries(result.dateQueries);
-  renderCrawlResults(result.crawlFindings);
+  statusEl.textContent = "正在查询航班价格...";
+  resultsEl.innerHTML = "";
+  resultCountEl.textContent = "";
+
+  try {
+    const response = await fetch(`/api/analyze?${params().toString()}`);
+    const result = await response.json();
+
+    const count = result.options ? result.options.length : 0;
+    const pricedCount = result.pricedCount || 0;
+    const airlineLabel = result.request.airlineId && result.request.airlineId !== "all"
+      ? result.airlines?.find(a => a.id === result.request.airlineId)?.name || "指定航司"
+      : "全部航司";
+
+    const priceInfo = pricedCount > 0
+      ? `${pricedCount}条有价格`
+      : "无实时价格数据";
+
+    statusEl.textContent = `${airlineLabel} · ${result.request.outboundStart} → ${result.request.outboundEnd} (${result.request.nights}天) · 共${count}条 · ${priceInfo} · 汇率 USD/CNY ${result.exchangeRate.rate} · ${new Date(result.generatedAt).toLocaleString()}`;
+
+    renderFlightCards(result.options);
+  } catch (error) {
+    statusEl.textContent = `查询失败：${error.message}`;
+    resultsEl.innerHTML = '<div class="empty-state">查询出错，请检查网络连接后重试</div>';
+  }
 }
 
 run().catch((error) => {
-  statusEl.textContent = `运行失败：${error.message}`;
+  statusEl.textContent = `初始化失败：${error.message}`;
 });

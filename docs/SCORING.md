@@ -4,7 +4,7 @@ The recommendation score is intentionally simple and explainable.
 
 Positive signals:
 
-- Lower estimated fare.
+- Lower verified fare when a structured pricing source is available.
 - Shorter total travel time.
 - China Southern participation, with a larger bonus for all-China-Southern itineraries.
 - Evening outbound departure.
@@ -18,4 +18,4 @@ Penalties:
 - Very long travel time.
 - Crawler/source uncertainty.
 
-The score is not a booking guarantee. It is a prioritization aid that helps decide which itinerary/date pair deserves manual verification first.
+The score is not a booking guarantee. In no-API mode, options without verified fares are sorted after priced options and should be treated as a prioritization aid for manual verification.

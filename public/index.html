@@ -10,40 +10,57 @@
     <main class="shell">
       <section class="toolbar">
         <div>
-          <h1>厦门 ⇄ 伦敦机票优化器</h1>
-          <p>Google Flights 数据接入 + 南航官网复核链接 + 票价策略评分</p>
+          <h1>厦门 ⇄ 伦敦航班比价</h1>
+          <p>选择航司后自动遍历所有日期，获取实时价格并按从低到高排序</p>
         </div>
-        <button id="run">重新扫描</button>
+        <button id="run">查询航班</button>
       </section>
 
       <section class="controls">
-        <label>出发地 <input id="origin" value="XMN" /></label>
-        <label>目的地 <input id="destination" value="LON" /></label>
-        <label>出发开始 <input id="outboundStart" type="date" value="2026-05-20" /></label>
-        <label>出发结束 <input id="outboundEnd" type="date" value="2026-06-08" /></label>
-        <label>旅行天数 <input id="nights" type="number" min="3" max="30" value="7" /></label>
-        <label>伦敦机场 <input id="airports" value="LHR,LGW" /></label>
-        <label>自动遍历 <select id="crawl"><option value="false">关闭</option><option value="true">开启</option></select></label>
-        <label>遍历天数 <input id="crawlDays" type="number" min="1" max="21" value="4" /></label>
-        <label>排序方式 <select id="sortBy"><option value="price">价格优先</option><option value="airline">航司优先</option></select></label>
+        <label>出发地 
+          <input id="origin" value="XMN" />
+        </label>
+        <label>目的地 
+          <input id="destination" value="LON" />
+        </label>
+        <label>航司选择 
+          <select id="airlineId">
+            <option value="all">全部航司</option>
+            <option value="cz">中国南方航空</option>
+            <option value="ca">中国国航</option>
+            <option value="mu">中国东方航空</option>
+            <option value="hu">海南航空</option>
+            <option value="3u">四川航空</option>
+            <option value="mf">厦门航空</option>
+            <option value="zh">深圳航空</option>
+          </select>
+        </label>
+        <label>出发开始 
+          <input id="outboundStart" type="date" value="2026-05-20" />
+        </label>
+        <label>出发结束 
+          <input id="outboundEnd" type="date" value="2026-06-08" />
+        </label>
+        <label>旅行天数 
+          <input id="nights" type="number" min="3" max="30" value="7" />
+        </label>
       </section>
 
-      <section class="status" id="status">准备就绪</section>
-      <section id="top" class="grid"></section>
+      <section class="status" id="status">准备就绪 — 点击「查询航班」获取实时价格</section>
 
       <section class="panel">
-        <h2>来源遍历状态</h2>
-        <div id="crawlResults" class="crawl-results"></div>
-      </section>
-
-      <section class="panel">
-        <h2>日期查询入口</h2>
-        <div id="queries" class="queries"></div>
+        <h2>航班结果 <span class="result-count" id="resultCount"></span></h2>
+        <div id="results" class="results-list"></div>
       </section>
 
       <section class="panel">
         <h2>使用说明</h2>
-        <p>设置环境变量 <code>SERPAPI_KEY</code> 后会尝试拉取 Google Flights 结构化结果。没有 key 时，工具仍会生成 Google Flights 与南航官网复核链接，并使用内置策略样例进行排序。</p>
+        <ul>
+          <li>选择航司后，系统自动遍历日期范围内的<strong>所有日期</strong></li>
+          <li>有 SERPAPI_KEY 时自动获取 Google Flights <strong>实时价格</strong>并排序</li>
+          <li>无 API Key 时显示参考航班组合 + 查价链接</li>
+          <li>免费注册 SerpApi 账号即可自动获取实时价格：<a href="https://serpapi.com/" target="_blank" rel="noreferrer">serpapi.com</a></li>
+        </ul>
       </section>
     </main>
     <script src="/app.js"></script>
