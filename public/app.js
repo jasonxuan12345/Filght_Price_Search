@@ -6,7 +6,8 @@ const fields = {
   nights: document.querySelector("#nights"),
   airports: document.querySelector("#airports"),
   crawl: document.querySelector("#crawl"),
-  crawlDays: document.querySelector("#crawlDays")
+  crawlDays: document.querySelector("#crawlDays"),
+  sortBy: document.querySelector("#sortBy")
 };
 
 const statusEl = document.querySelector("#status");
@@ -25,6 +26,7 @@ function params() {
   p.set("allowLondonAirports", fields.airports.value.trim());
   p.set("crawl", fields.crawl.value);
   p.set("crawlDays", fields.crawlDays.value);
+  p.set("sortBy", fields.sortBy.value);
   return p;
 }
 
@@ -100,8 +102,9 @@ async function run() {
   topEl.innerHTML = "";
   const response = await fetch(`/api/analyze?${params().toString()}`);
   const result = await response.json();
-  statusEl.textContent = `${result.providerStatus} USD/CNY=${result.exchangeRate.rate}（${result.exchangeRate.source}） 生成时间：${new Date(result.generatedAt).toLocaleString()}`;
-  topEl.innerHTML = result.top.map(renderCard).join("");
+  const sortLabel = result.request.sortBy === "airline" ? "航司优先" : "价格优先";
+  statusEl.textContent = `${result.providerStatus} · 排序方式：${sortLabel} · USD/CNY=${result.exchangeRate.rate}（${result.exchangeRate.source}） · 生成时间：${new Date(result.generatedAt).toLocaleString()}`;
+  topEl.innerHTML = result.options.map((option, index) => renderCard(option, index)).join("");
   renderQueries(result.dateQueries);
   renderCrawlResults(result.crawlFindings);
 }
