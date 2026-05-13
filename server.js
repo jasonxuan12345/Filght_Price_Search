@@ -698,30 +698,32 @@ function parseLayoverMinutes(arrivalTime, nextDepartureTime) {
 }
 
 async function serpApiExplore(request) {
-  const apiKey = process.env.SERPAPI_KEY;
+  const apiKey = request.serpApiKey || process.env.SERPAPI_KEY;
   if (!apiKey) return { provider: "serpapi", enabled: false, options: [], message: "未设置 SERPAPI_KEY，使用参考班次+查价链接模式。获取免费 API Key：https://serpapi.com/" };
 
   const options = [];
   let queryCount = 0;
+  let lastError = "";
   const maxQueries = Math.max(1, Number(request.serpApiMaxQueries || process.env.SERPAPI_MAX_QUERIES || 2));
+  const concurrency = Math.min(maxQueries, Math.max(1, Number(request.serpApiConcurrency || process.env.SERPAPI_CONCURRENCY || 5)));
   const dates = enumerateDates(request.outboundStart, request.outboundEnd);
   const airline = AIRLINES.find(a => a.id === request.airlineId);
   const airlineCode = (airline && airline.id !== "all") ? airline.code : "";
+  const tasks = [];
 
   for (const outboundDate of dates) {
     const returnDate = addDays(outboundDate, request.nights);
     for (const arrival of request.allowLondonAirports || LONDON_AIRPORTS) {
-      if (queryCount >= maxQueries) {
-        return {
-          provider: "serpapi",
-          enabled: true,
-          options,
-          message: options.length > 0
-            ? `Google Flights 实时价格：${options.length} 个航班（已按上限执行 ${queryCount}/${maxQueries} 次 SerpApi 查询）`
-            : `已按上限执行 ${queryCount}/${maxQueries} 次 SerpApi 查询，但未返回航班`
-        };
-      }
+      if (tasks.length >= maxQueries) break;
+      tasks.push({ outboundDate, returnDate, arrival, index: tasks.length });
+    }
+    if (tasks.length >= maxQueries) break;
+  }
 
+  async function runSerpApiTask(task) {
+    const { outboundDate, returnDate, arrival } = task;
+    const taskOptions = [];
+    try {
       const url = new URL("https://serpapi.com/search.json");
       url.searchParams.set("engine", "google_flights");
       url.searchParams.set("departure_id", request.origin);
@@ -740,127 +742,140 @@ async function serpApiExplore(request) {
       url.searchParams.set("stops", "2");
       url.searchParams.set("max_price", "3000");
 
-      try {
-        queryCount += 1;
-        const response = await fetch(url);
-        if (!response.ok) continue;
-        const json = await response.json();
+      queryCount += 1;
+      const response = await fetch(url);
+      if (!response.ok) return { options: [], error: `HTTP ${response.status}` };
+      const json = await response.json();
+      if (json.error) return { options: [], error: json.error };
 
-        const allFlights = [
-          ...(json.best_flights || []),
-          ...(json.other_flights || [])
-        ];
+      const allFlights = [
+        ...(json.best_flights || []),
+        ...(json.other_flights || [])
+      ];
 
-        for (const flight of allFlights) {
-          const legs = flight.flights || [];
-          if (legs.length < 2) continue;
+      for (const [flightIndex, flight] of allFlights.entries()) {
+        const legs = flight.flights || [];
+        if (legs.length < 2) continue;
 
-          const lastOutboundLegIdx = legs.findIndex(leg => {
-            const depId = leg.departure_airport?.id;
-            return depId === arrival || LONDON_AIRPORTS.includes(depId);
-          });
+        const lastOutboundLegIdx = legs.findIndex(leg => {
+          const depId = leg.departure_airport?.id;
+          return depId === arrival || LONDON_AIRPORTS.includes(depId);
+        });
 
-          const outboundLegs = lastOutboundLegIdx >= 0
-            ? legs.slice(0, lastOutboundLegIdx + 1)
-            : legs;
-          const returnLegs = lastOutboundLegIdx >= 0
-            ? legs.slice(lastOutboundLegIdx + 1)
-            : [];
+        const outboundLegs = lastOutboundLegIdx >= 0
+          ? legs.slice(0, lastOutboundLegIdx + 1)
+          : legs;
+        const returnLegs = lastOutboundLegIdx >= 0
+          ? legs.slice(lastOutboundLegIdx + 1)
+          : [];
 
-          const outboundLeg1 = outboundLegs[0];
-          const outboundLeg2 = outboundLegs.length > 1 ? outboundLegs[outboundLegs.length - 1] : null;
+        const outboundLeg1 = outboundLegs[0];
+        const outboundLeg2 = outboundLegs.length > 1 ? outboundLegs[outboundLegs.length - 1] : null;
 
-          const returnLeg1 = returnLegs[0];
-          const returnLeg2 = returnLegs.length > 1 ? returnLegs[returnLegs.length - 1] : null;
+        const returnLeg1 = returnLegs[0];
+        const returnLeg2 = returnLegs.length > 1 ? returnLegs[returnLegs.length - 1] : null;
 
-          const outboundLayover = outboundLeg2 && outboundLeg1
-            ? parseLayoverMinutes(outboundLeg1.arrival_airport?.time, outboundLeg2.departure_airport?.time)
-            : null;
+        const outboundLayover = outboundLeg2 && outboundLeg1
+          ? parseLayoverMinutes(outboundLeg1.arrival_airport?.time, outboundLeg2.departure_airport?.time)
+          : null;
 
-          const returnLayover = returnLeg2 && returnLeg1
-            ? parseLayoverMinutes(returnLeg1.arrival_airport?.time, returnLeg2.departure_airport?.time)
-            : null;
+        const returnLayover = returnLeg2 && returnLeg1
+          ? parseLayoverMinutes(returnLeg1.arrival_airport?.time, returnLeg2.departure_airport?.time)
+          : null;
 
-          const legsForDisplay = outboundLegs.map(leg => ({
-            flightNo: leg.flight_number || "",
-            from: leg.departure_airport?.id || "",
-            to: leg.arrival_airport?.id || "",
-            depLocal: parseTime(leg.departure_airport?.time) || "",
-            arrLocal: parseTime(leg.arrival_airport?.time) || "",
-            airline: leg.airline || "",
-            duration: leg.duration || 0
-          }));
+        const legsForDisplay = outboundLegs.map(leg => ({
+          flightNo: leg.flight_number || "",
+          from: leg.departure_airport?.id || "",
+          to: leg.arrival_airport?.id || "",
+          depLocal: parseTime(leg.departure_airport?.time) || "",
+          arrLocal: parseTime(leg.arrival_airport?.time) || "",
+          airline: leg.airline || "",
+          duration: leg.duration || 0
+        }));
 
-          const returnLegsForDisplay = returnLegs.map(leg => ({
-            flightNo: leg.flight_number || "",
-            from: leg.departure_airport?.id || "",
-            to: leg.arrival_airport?.id || "",
-            depLocal: parseTime(leg.departure_airport?.time) || "",
-            arrLocal: parseTime(leg.arrival_airport?.time) || "",
-            airline: leg.airline || "",
-            duration: leg.duration || 0
-          }));
+        const returnLegsForDisplay = returnLegs.map(leg => ({
+          flightNo: leg.flight_number || "",
+          from: leg.departure_airport?.id || "",
+          to: leg.arrival_airport?.id || "",
+          depLocal: parseTime(leg.departure_airport?.time) || "",
+          arrLocal: parseTime(leg.arrival_airport?.time) || "",
+          airline: leg.airline || "",
+          duration: leg.duration || 0
+        }));
 
-          const airlineNames = [...new Set(legs.map(l => l.airline).filter(Boolean))];
+        const airlineNames = [...new Set(legs.map(l => l.airline).filter(Boolean))];
 
-          const sourceLinks = buildSourceLinks({
-            origin: request.origin,
-            destination: arrival,
-            outboundDate,
-            returnDate
-          });
+        const sourceLinks = buildSourceLinks({
+          origin: request.origin,
+          destination: arrival,
+          outboundDate,
+          returnDate
+        });
 
-          options.push({
-            id: `serpapi-${outboundDate}-${arrival}-${options.length}`,
-            source: "serpapi",
-            sourceName: "Google Flights 实时价格 (via SerpApi)",
-            priceSource: `${new Date().toISOString().slice(0, 10)} Google Flights 实时查询`,
-            title: `${airlineNames.join(" + ")} ${outboundDate} → ${returnDate}`,
-            outboundDate,
-            returnDate,
-            route: `${request.origin} → ${arrival}`,
-            hubs: [outboundLeg2?.departure_airport?.id || legs[0]?.departure_airport?.id].filter(Boolean),
-            londonAirport: arrival,
-            airlines: airlineNames.map(normalizeAirlineName),
-            airlineCode: airlineCode || legs[0]?.airline || "",
-            airlineBaseUrl: null,
-            totalDuration: flight.total_duration ? formatDuration(flight.total_duration) : null,
-            totalDurationMinutes: flight.total_duration || null,
-            layoverOutbound: outboundLayover ? formatDuration(outboundLayover) : null,
-            layoverReturn: returnLayover ? formatDuration(returnLayover) : null,
-            outboundLegs: legsForDisplay,
-            returnLegs: returnLegsForDisplay,
-            outboundLeg1: legsForDisplay[0] || null,
-            outboundLeg2: legsForDisplay.length > 1 ? legsForDisplay[legsForDisplay.length - 1] : null,
-            returnLeg1: returnLegsForDisplay[0] || null,
-            returnLeg2: returnLegsForDisplay.length > 1 ? returnLegsForDisplay[returnLegsForDisplay.length - 1] : null,
-            note: "",
-            priceUsd: flight.price || null,
-            priceCny: null,
-            ticketing: "through",
-            channel: "Google Flights → 航司/OTA",
-            sourceLinks,
-            googleFlightsUrl: sourceLinks.googleFlights,
-            chinaSouthernUrl: sourceLinks.chinaSouthern,
-            routeZh: legsForDisplay.map(l => `${describeCode(l.from)} → ${describeCode(l.to)}`).join(" / "),
-            hubsZh: options.length ? [] : [],
-            londonAirportZh: describeCode(arrival),
-            risks: []
-          });
-        }
-      } catch {
-        // skip failed date/airport combos
+        taskOptions.push({
+          id: `serpapi-${outboundDate}-${arrival}-${task.index}-${flightIndex}`,
+          source: "serpapi",
+          sourceName: "Google Flights 实时价格 (via SerpApi)",
+          priceSource: `${new Date().toISOString().slice(0, 10)} Google Flights 实时查询`,
+          title: `${airlineNames.join(" + ")} ${outboundDate} → ${returnDate}`,
+          outboundDate,
+          returnDate,
+          route: `${request.origin} → ${arrival}`,
+          hubs: [outboundLeg2?.departure_airport?.id || legs[0]?.departure_airport?.id].filter(Boolean),
+          londonAirport: arrival,
+          airlines: airlineNames.map(normalizeAirlineName),
+          airlineCode: airlineCode || legs[0]?.airline || "",
+          airlineBaseUrl: null,
+          totalDuration: flight.total_duration ? formatDuration(flight.total_duration) : null,
+          totalDurationMinutes: flight.total_duration || null,
+          layoverOutbound: outboundLayover ? formatDuration(outboundLayover) : null,
+          layoverReturn: returnLayover ? formatDuration(returnLayover) : null,
+          outboundLegs: legsForDisplay,
+          returnLegs: returnLegsForDisplay,
+          outboundLeg1: legsForDisplay[0] || null,
+          outboundLeg2: legsForDisplay.length > 1 ? legsForDisplay[legsForDisplay.length - 1] : null,
+          returnLeg1: returnLegsForDisplay[0] || null,
+          returnLeg2: returnLegsForDisplay.length > 1 ? returnLegsForDisplay[returnLegsForDisplay.length - 1] : null,
+          note: "",
+          priceUsd: flight.price || null,
+          priceCny: null,
+          ticketing: "through",
+          channel: "Google Flights → 航司/OTA",
+          sourceLinks,
+          googleFlightsUrl: sourceLinks.googleFlights,
+          chinaSouthernUrl: sourceLinks.chinaSouthern,
+          routeZh: legsForDisplay.map(l => `${describeCode(l.from)} → ${describeCode(l.to)}`).join(" / "),
+          hubsZh: [],
+          londonAirportZh: describeCode(arrival),
+          risks: []
+        });
       }
+      return { options: taskOptions, error: "" };
+    } catch (error) {
+      return { options: [], error: error.message };
     }
   }
+
+  let nextTaskIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, async () => {
+    while (nextTaskIndex < tasks.length) {
+      const task = tasks[nextTaskIndex++];
+      const result = await runSerpApiTask(task);
+      if (result.error) lastError = result.error;
+      options.push(...result.options);
+    }
+  });
+  await Promise.all(workers);
 
   return {
     provider: "serpapi",
     enabled: true,
     options,
     message: options.length > 0
-      ? `Google Flights 实时价格：${options.length} 个航班（执行 ${queryCount}/${maxQueries} 次 SerpApi 查询）`
-      : `SerpApi 查询完成但未返回航班，可能该日期无此航线（执行 ${queryCount}/${maxQueries} 次查询）`
+      ? `Google Flights 实时价格：${options.length} 个航班（执行 ${queryCount}/${maxQueries} 次 SerpApi 查询，并发 ${concurrency}）`
+      : lastError
+        ? `SerpApi 查询失败：${lastError}（执行 ${queryCount}/${maxQueries} 次查询，并发 ${concurrency}）`
+        : `SerpApi 查询完成但未返回航班，可能该日期无此航线（执行 ${queryCount}/${maxQueries} 次查询，并发 ${concurrency}）`
   };
 }
 
@@ -976,10 +991,11 @@ async function analyze(request = DEFAULT_REQUEST) {
   }));
 
   const pricedCount = allOptions.filter(o => o.priceUsd != null || o.priceCny != null).length;
+  const { serpApiKey, ...safeRequest } = mergedRequest;
 
   return {
     generatedAt: new Date().toISOString(),
-    request: mergedRequest,
+    request: safeRequest,
     exchangeRate,
     providerStatus: [serpApiResult.message, ctripResult.message].filter(Boolean).join("；"),
     pricedCount,
@@ -1025,22 +1041,45 @@ async function serveStatic(req, res) {
   }
 }
 
+function parseAnalyzeRequest(request) {
+  const destination = String(request.destination || DEFAULT_REQUEST.destination).trim().toUpperCase();
+  const allowLondonAirports = request.allowLondonAirports
+    ? String(request.allowLondonAirports).split(",").map(code => code.trim().toUpperCase()).filter(Boolean)
+    : destination === "LON"
+      ? DEFAULT_REQUEST.allowLondonAirports
+      : [destination];
+
+  return {
+    ...request,
+    destination,
+    nights: request.nights ? Number(request.nights) : DEFAULT_REQUEST.nights,
+    allowLondonAirports,
+    preferEveningDeparture: request.preferEveningDeparture !== "false",
+    crawl: request.crawl === "true" || request.crawl === true,
+    crawlDays: request.crawlDays ? Number(request.crawlDays) : 4,
+    sortBy: request.sortBy || DEFAULT_REQUEST.sortBy,
+    airlineId: request.airlineId || "all",
+    serpApiKey: request.serpApiKey || "",
+    serpApiMaxQueries: request.serpApiMaxQueries ? Number(request.serpApiMaxQueries) : undefined,
+    serpApiConcurrency: request.serpApiConcurrency ? Number(request.serpApiConcurrency) : undefined
+  };
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  if (!chunks.length) return {};
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
 async function startServer() {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     if (url.pathname === "/api/analyze") {
-      const request = Object.fromEntries(url.searchParams.entries());
-      const parsed = {
-        ...request,
-        nights: request.nights ? Number(request.nights) : DEFAULT_REQUEST.nights,
-        allowLondonAirports: request.allowLondonAirports ? request.allowLondonAirports.split(",") : DEFAULT_REQUEST.allowLondonAirports,
-        preferEveningDeparture: request.preferEveningDeparture !== "false",
-        crawl: request.crawl === "true",
-        crawlDays: request.crawlDays ? Number(request.crawlDays) : 4,
-        sortBy: request.sortBy || DEFAULT_REQUEST.sortBy,
-        airlineId: request.airlineId || "all",
-        serpApiMaxQueries: request.serpApiMaxQueries ? Number(request.serpApiMaxQueries) : undefined
-      };
+      const request = req.method === "POST"
+        ? await readJsonBody(req)
+        : Object.fromEntries(url.searchParams.entries());
+      const parsed = parseAnalyzeRequest(request);
       sendJson(res, await analyze(parsed));
       return;
     }

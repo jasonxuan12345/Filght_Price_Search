@@ -38,6 +38,8 @@ Invoke-RestMethod "http://localhost:8787/api/analyze?crawl=true&crawlDays=1"
 
 Google Flights 没有官方公开 API。工具支持通过 SerpApi 的 `google_travel_explore` 接口获取结构化结果。
 
+网页打开后会先要求输入 SerpApi Key，点击查询时才会调用 Google Flights。Key 只保存在当前浏览器会话的 `sessionStorage` 中，关闭浏览器窗口后需要重新输入。
+
 ```powershell
 $env:SERPAPI_KEY="你的 key"
 npm start
@@ -46,6 +48,10 @@ npm start
 也可以复制 `.env.example` 作为本地配置参考。
 
 为避免一次扫完整日期范围消耗过多额度，默认通过 `SERPAPI_MAX_QUERIES=2` 限制每次分析最多执行 2 次 SerpApi 查询。需要覆盖更多日期/机场时，可以临时调高环境变量，或在请求里追加 `serpApiMaxQueries=10`。
+
+网页里也提供了“SerpApi 查询次数上限”输入框，并会按日期范围估算需要的查询次数。目的地为 `LON` 时默认同时查询 `LHR` 和 `LGW`，所以 30 天约需要 60 次查询；如果只查 `LHR` 或 `LGW`，30 天约需要 30 次。
+
+查询会按“同时查询数”并发执行。比如 60 次查询、并发 5 时，大约分 12 批完成；建议保持在 3-8，太高可能触发限流或导致单次请求不稳定。
 
 ## 携程低价日历
 
